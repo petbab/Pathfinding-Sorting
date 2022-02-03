@@ -1,10 +1,5 @@
 import pygame as py
-
-BLOCK_SIZE = 16
-SCREEN_W, SCREEN_H = 1024, 800
-SCREEN_COLOR = (60, 60, 60)
-TEXT_COLOR = (255, 255, 255)
-FPS = 30
+from constants import *
 
 
 def main() -> None:
