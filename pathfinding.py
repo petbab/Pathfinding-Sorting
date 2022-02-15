@@ -8,13 +8,14 @@ Circle = Tuple[Coord, int]
 Color = Tuple[int, int, int]
 Grid = List[List['Node']]
 
-FREE, START, FINISH, WALL, OPEN, CLOSED, FINAL = range(7)
-SFS_NOT_DEF = -1  # steps from start not defined
+FREE, START, FINISH, WALL, MY_WALL, OPEN, CLOSED, FINAL = range(8)
+SFS_UNDEF = -1  # steps from start not defined
 BLOCK_COLORS: Dict[int, Color] = {
     FREE: (0, 0, 0),
     START: (0, 255, 0),
     FINISH: (255, 0, 0),
     WALL: (15, 15, 15),
+    MY_WALL: (15, 15, 15),
     OPEN: (150, 255, 150),
     CLOSED: (150, 150, 255),
     FINAL: (255, 150, 150)
@@ -66,17 +67,25 @@ class Node:
         x, y = grid_pos
         return self.col * BLOCK_SIZE + x, self.row * BLOCK_SIZE + y
 
-    def set_color(self) -> None:
+    def set_state(self, state: int) -> None:
+        self.state = state
+        self.update_color()
+
+    def set_weight(self, weight: int) -> None:
+        self.weight = weight
+        self.update_color()
+
+    def update_color(self) -> None:
         self.color = BLOCK_COLORS[self.state]
         r, g, b = WEIGHTED_COLOR
         self.weighted_color = (r + self.weight * WC_MULTIPLIER, g, b)
 
-    def show(self, screen: py.surface.Surface, offset: Coord, block_size: int) -> None:
+    def show(self, screen: py.surface.Surface, offset: Coord) -> None:
         x, y = self.get_abs_coord(offset)
         if self.weight != 1:
             vertices = wall_shape(x, y, self.animation_tick)
             py.draw.polygon(screen, self.weighted_color, vertices)
-        if self.state == WALL:
+        if self.state in [WALL, MY_WALL]:
             vertices = wall_shape(x, y, self.animation_tick)
             py.draw.polygon(screen, self.color, vertices)
         elif self.state == START or self.state == FINISH:
@@ -89,11 +98,14 @@ class Node:
 
 
 class SearchGrid:
+    grids: List['SearchGrid'] = []
+    last_interaction: Optional['SearchGrid'] = None
+    node_up: Optional[int] = None
+
     def __init__(self, cols: int, rows: int, offset: Coord,
-                 block_size: int, start: Coord, finish: Coord) -> None:
+                 start: Coord, finish: Coord) -> None:
         self.rows, self.cols = rows, cols
         self.x, self.y = offset
-        self.block_size = block_size
         self.start = start
         self.finish = finish
         # attributes used in algorithms:
@@ -105,6 +117,19 @@ class SearchGrid:
 
     def get_node(self, col: int, row: int) -> Node:
         return self.grid[row][col]
+
+    def coord_in_grid(self, coord: Coord) -> bool:
+        x, y = coord
+        return self.x <= x <= self.x + BLOCK_SIZE * self.cols \
+            and self.y <= y <= self.y + BLOCK_SIZE * self.rows
+
+    def get_node_with_coord(self, coord: Coord) -> Optional[Node]:
+        if not self.coord_in_grid(coord):
+            return None
+        x, y = coord
+        col = (x - self.x) // BLOCK_SIZE
+        row = (y - self.y) // BLOCK_SIZE
+        return self.get_node(col, row)
 
     def reset_grid(self, start: Coord, finish: Coord) -> None:
         self.start = start
@@ -120,12 +145,12 @@ class SearchGrid:
             row_list: List[Node] = []
             for col in range(self.cols):
                 if col == 0 or row == 0 or col == self.cols - 1 or row == self.rows - 1:
-                    node = Node(col, row, SFS_NOT_DEF, WALL)
+                    node = Node(col, row, SFS_UNDEF, WALL)
                 elif (col, row) == self.start:
                     node = Node(col, row, 0, START)
                     self.closed_nodes.append(node)
                 elif (col, row) == self.finish:
-                    node = Node(col, row, SFS_NOT_DEF, FINISH)
+                    node = Node(col, row, SFS_UNDEF, FINISH)
                     self.final_nodes.append(node)
                 else:
                     node = Node(col, row, -1)
@@ -135,30 +160,58 @@ class SearchGrid:
     def show(self, screen: py.surface.Surface) -> None:
         for row in self.grid:
             for node in row:
-                node.show(screen, (self.x, self.y), self.block_size)
+                node.show(screen, (self.x, self.y))
+
+    def move_start_finish(self, mouse_pos: Coord) -> None:
+        node = self.get_node_with_coord(mouse_pos)
+        assert node
+        if not SearchGrid.node_up and (node.state == START or node.state == FINISH):
+            SearchGrid.node_up = node.state
+            node.set_state(FREE)
+            SearchGrid.last_interaction = self
+        elif SearchGrid.node_up and SearchGrid.last_interaction == self and node.state == FREE:
+            node.set_state(SearchGrid.node_up)
+            SearchGrid.node_up = None
+            if SearchGrid.node_up == START:
+                self.closed_nodes = [node]
+            else:
+                self.final_nodes = [node]
+
+    @classmethod
+    def coord_in_grids(cls, coord: Coord) -> Optional['SearchGrid']:
+        for grid in cls.grids:
+            if grid.coord_in_grid(coord):
+                return grid
+        return None
 
 
 def main(screen: py.surface.Surface, clock: py.time.Clock) -> None:
     cols, rows = SCREEN_W // BLOCK_SIZE, SCREEN_H // BLOCK_SIZE
-    start = (cols // 2, 5)
-    finish = (cols // 2, rows - 6)
-    search_grid = SearchGrid(cols, rows, (0, 0), BLOCK_SIZE, start, finish)
+    start_pos = (cols // 2, 5)
+    finish_pos = (cols // 2, rows - 6)
+    SearchGrid.grids = [SearchGrid(cols, rows, (0, 0), start_pos, finish_pos)]
+    search_started = False
 
     while True:
         clock.tick(FPS)
+        mouse_pos = py.mouse.get_pos()
         for event in py.event.get():
             if event.type == py.QUIT:
                 py.quit()
                 return
+            if event.type == py.MOUSEBUTTONDOWN:
+                mouse_in_grid = SearchGrid.coord_in_grids(mouse_pos)
+                if not search_started and mouse_in_grid:
+                    mouse_in_grid.move_start_finish(mouse_pos)
 
         screen.fill(SCREEN_COLOR)
-        search_grid.show(screen)
+        for grid in SearchGrid.grids:
+            grid.show(screen)
         py.display.update()
 
 
 if __name__ == '__main__':
     py.init()
-    text_font = py.font.SysFont('times new roman', int(BLOCK_SIZE * 1.5))
     screen_ = py.display.set_mode((SCREEN_W, SCREEN_H))
     clock_ = py.time.Clock()
     main(screen_, clock_)
