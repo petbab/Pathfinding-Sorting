@@ -1,6 +1,7 @@
 from typing import Tuple, List, Dict, Optional
 import pygame as py
-from constants import *
+from constants import BLOCK_SIZE, ANIMATION_TICKS,\
+    SCREEN_W, SCREEN_H, SCREEN_COLOR, FPS
 
 Coord = Tuple[int, int]
 Block = List[Coord]

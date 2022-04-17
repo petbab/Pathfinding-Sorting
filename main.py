@@ -1,5 +1,5 @@
 import pygame as py
-from constants import *
+from constants import BLOCK_SIZE, SCREEN_W, SCREEN_H, FPS, SCREEN_COLOR
 
 
 def main() -> None:
